@@ -1,0 +1,42 @@
+{
+  "entities": {
+    "DailyData": {
+      "title": "DailyData",
+      "description": "Daily tracking data for a user",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "meals": { "type": "array", "items": { "type": "object" } },
+        "workouts": { "type": "array", "items": { "type": "object" } },
+        "activities": { "type": "array", "items": { "type": "object" } },
+        "runDistance": { "type": "number" },
+        "runDuration": { "type": "number" },
+        "steps": { "type": "number" },
+        "waterIntake": { "type": "number" },
+        "studySessions": { "type": "array", "items": { "type": "object" } },
+        "supplements": { "type": "object" }
+      },
+      "required": ["date"]
+    },
+    "PRData": {
+      "title": "PRData",
+      "description": "Personal records for exercises",
+      "type": "object",
+      "properties": {
+        "currentPR": { "type": "number" },
+        "targetPR": { "type": "number" },
+        "prAction": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}/dailyData/{date}": {
+      "schema": { "$ref": "#/entities/DailyData" },
+      "description": "Daily tracking data per user"
+    },
+    "/users/{userId}/prData/{exerciseName}": {
+      "schema": { "$ref": "#/entities/PRData" },
+      "description": "PR data per user per exercise"
+    }
+  }
+}
