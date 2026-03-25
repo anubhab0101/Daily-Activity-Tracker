@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Dumbbell, Utensils, Clock, Plus, Trash2, Loader2, Calendar, LayoutDashboard, Droplets, BookOpen, Footprints, Pill, LogOut, LineChart, ChevronLeft, ChevronRight, MessageSquare, Send, X, Sparkles } from 'lucide-react';
-import { calculateMacros, createChatSession, suggestWorkoutPlan } from './services/gemini';
-import { Meal, Workout, DailyActivity, DailyData, PRTracker, Exercise, ExerciseSet, StudySession } from './types';
+import { Activity, Dumbbell, Utensils, Clock, Plus, Trash2, Loader2, Calendar, LayoutDashboard, Droplets, BookOpen, Footprints, Pill, LogOut, LineChart, ChevronLeft, ChevronRight, Sparkles, Settings, X } from 'lucide-react';
+import { calculateMacros, suggestWorkoutPlan } from './services/gemini';
+import { Meal, Workout, DailyActivity, DailyData, PRTracker, Exercise, ExerciseSet, StudySession, UserProfile } from './types';
 import Login from './Login';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, onSnapshot, setDoc, getDoc, collection, query, getDocs, enableNetwork, disableNetwork } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, collection, query, getDocs } from 'firebase/firestore';
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { format, subDays, addDays, parseISO, startOfWeek, endOfWeek, eachDayOfInterval } from 'date-fns';
 
@@ -19,101 +19,168 @@ const getLocalDate = (dateStr: string) => {
   return new Date(Number(year), Number(month) - 1, Number(day));
 };
 
-function Chatbot() {
-  const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<{role: 'user' | 'model', text: string}[]>([]);
-  const [input, setInput] = useState('');
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+function OnboardingModal({ user, onComplete }: { user: any, onComplete: () => void }) {
+  const [name, setName] = useState('');
+  const [age, setAge] = useState('');
+  const [height, setHeight] = useState('');
+  const [goal, setGoal] = useState('Weight Loss');
   const [isLoading, setIsLoading] = useState(false);
-  const [chatSession, setChatSession] = useState<any>(null);
 
-  useEffect(() => {
-    if (isOpen && !chatSession) {
-      setChatSession(createChatSession());
-      setMessages([{ role: 'model', text: 'Hi! I am your fitness and nutrition assistant. How can I help you today?' }]);
-    }
-  }, [isOpen, chatSession]);
-
-  const handleSend = async () => {
-    if (!input.trim() || !chatSession) return;
-    
-    const userMsg = input.trim();
-    setInput('');
-    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name || !age || !height) return;
     setIsLoading(true);
-
     try {
-      const response = await chatSession.sendMessage({ message: userMsg });
-      setMessages(prev => [...prev, { role: 'model', text: response.text }]);
+      const profile: UserProfile = {
+        name,
+        age,
+        height,
+        goal,
+        createdAt: new Date().toISOString()
+      };
+      await setDoc(doc(db, `users/${user.uid}/profile/data`), profile);
+      onComplete();
     } catch (error) {
-      console.error('Chat error:', error);
-      setMessages(prev => [...prev, { role: 'model', text: 'Sorry, I encountered an error while processing your request.' }]);
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/profile/data`);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <>
-      {/* Floating Action Button */}
-      <button
-        onClick={() => setIsOpen(true)}
-        className={`fixed bottom-6 right-6 p-4 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 transition-all z-40 ${isOpen ? 'scale-0' : 'scale-100'}`}
-      >
-        <MessageSquare size={24} />
-      </button>
-
-      {/* Chat Window */}
-      <div className={`fixed bottom-6 right-6 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-neutral-200 z-50 transition-all duration-300 transform origin-bottom-right flex flex-col overflow-hidden ${isOpen ? 'scale-100 opacity-100' : 'scale-0 opacity-0 pointer-events-none'}`} style={{ height: '500px', maxHeight: 'calc(100vh - 48px)' }}>
-        {/* Header */}
-        <div className="bg-indigo-600 p-4 flex items-center justify-between text-white">
-          <div className="flex items-center gap-2">
-            <MessageSquare size={20} />
-            <h3 className="font-semibold">AI Assistant</h3>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl">
+        <h2 className="text-2xl font-bold text-neutral-900 mb-2">Welcome to ApexFit AI!</h2>
+        <p className="text-neutral-500 mb-6">Let's set up your profile to personalize your experience.</p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">Name</label>
+            <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" required />
           </div>
-          <button onClick={() => setIsOpen(false)} className="text-indigo-100 hover:text-white transition-colors">
-            <X size={20} />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 mb-1">Age</label>
+              <input type="number" value={age} onChange={e => setAge(e.target.value)} className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 mb-1">Height (cm)</label>
+              <input type="number" value={height} onChange={e => setHeight(e.target.value)} className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" required />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">Primary Goal</label>
+            <select value={goal} onChange={e => setGoal(e.target.value)} className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <option>Weight Loss</option>
+              <option>Muscle Gain</option>
+              <option>Maintenance</option>
+              <option>Endurance</option>
+            </select>
+          </div>
+          <button type="submit" disabled={isLoading} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors mt-6">
+            {isLoading ? 'Saving...' : 'Get Started'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal({ user, userProfile, onClose }: { user: any, userProfile: UserProfile | null, onClose: () => void }) {
+  const [apiKey, setApiKey] = useState(userProfile?.geminiApiKey || '');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSave = async () => {
+    if (!user || !userProfile) return;
+    setIsLoading(true);
+    try {
+      await setDoc(doc(db, `users/${user.uid}/profile/data`), {
+        ...userProfile,
+        geminiApiKey: apiKey
+      });
+      onClose();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/profile/data`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold text-neutral-900">Settings</h2>
+          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600"><X size={20} /></button>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">Gemini API Key</label>
+            <p className="text-xs text-neutral-500 mb-2">Required after your 3-day trial to continue using AI features.</p>
+            <input 
+              type="password" 
+              value={apiKey} 
+              onChange={e => setApiKey(e.target.value)} 
+              placeholder="AIzaSy..."
+              className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+            />
+          </div>
+          <button onClick={handleSave} disabled={isLoading} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors mt-4">
+            {isLoading ? 'Saving...' : 'Save Settings'}
           </button>
         </div>
-
-        {/* Messages */}
-        <div className="flex-1 p-4 overflow-y-auto bg-neutral-50 space-y-4 flex flex-col">
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`max-w-[85%] rounded-2xl px-4 py-2 ${msg.role === 'user' ? 'bg-indigo-600 text-white self-end rounded-br-sm' : 'bg-white border border-neutral-200 text-neutral-800 self-start rounded-bl-sm'}`}>
-              <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-            </div>
-          ))}
-          {isLoading && (
-            <div className="bg-white border border-neutral-200 text-neutral-800 self-start rounded-2xl rounded-bl-sm px-4 py-3 max-w-[85%]">
-              <Loader2 size={16} className="animate-spin text-indigo-600" />
-            </div>
-          )}
-        </div>
-
-        {/* Input */}
-        <div className="p-3 bg-white border-t border-neutral-100">
-          <form 
-            onSubmit={(e) => { e.preventDefault(); handleSend(); }}
-            className="flex items-center gap-2"
-          >
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask me anything..."
-              className="flex-1 p-2.5 bg-neutral-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              disabled={isLoading}
-            />
-            <button 
-              type="submit" 
-              disabled={!input.trim() || isLoading}
-              className="p-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-            >
-              <Send size={18} />
-            </button>
-          </form>
-        </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -128,6 +195,10 @@ export default function App() {
   const [historicalData, setHistoricalData] = useState<DailyData[]>([]);
   const [selectedDateStr, setSelectedDateStr] = useState(getTodayString());
   
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+
   const selectedData: DailyData = dailyData[selectedDateStr] || { 
     date: selectedDateStr, 
     meals: [], 
@@ -155,19 +226,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        enableNetwork(db).catch(console.error);
-      } else {
-        disableNetwork(db).catch(console.error);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
-
-  useEffect(() => {
     if (!user || !isAuthReady) return;
+
+    const profileRef = doc(db, `users/${user.uid}/profile/data`);
+    const unsubscribeProfile = onSnapshot(profileRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setUserProfile(docSnap.data() as UserProfile);
+        setShowOnboarding(false);
+      } else {
+        setShowOnboarding(true);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}/profile/data`);
+    });
 
     const dailyDataRef = collection(db, `users/${user.uid}/dailyData`);
     const unsubscribeDaily = onSnapshot(dailyDataRef, (snapshot) => {
@@ -181,7 +252,7 @@ export default function App() {
       setDailyData(data);
       setHistoricalData(history.sort((a, b) => a.date.localeCompare(b.date)));
     }, (error) => {
-      console.error("Error fetching daily data:", error);
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}/dailyData`);
     });
 
     const prDataRef = collection(db, `users/${user.uid}/prData`);
@@ -192,10 +263,11 @@ export default function App() {
       });
       setPrData(data);
     }, (error) => {
-      console.error("Error fetching PR data:", error);
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}/prData`);
     });
 
     return () => {
+      unsubscribeProfile();
       unsubscribeDaily();
       unsubscribePR();
     };
@@ -217,8 +289,7 @@ export default function App() {
     try {
       await setDoc(doc(db, `users/${user.uid}/dailyData/${selectedDateStr}`), updatedData);
     } catch (error) {
-      console.error("Error updating daily data:", error);
-      // Revert optimistic update on error if needed, or show a toast
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/dailyData/${selectedDateStr}`);
     }
   };
 
@@ -234,7 +305,7 @@ export default function App() {
          await setDoc(doc(db, `users/${user.uid}/prData/${exerciseName}`), pr);
       }
     } catch (error) {
-      console.error("Error updating PR data:", error);
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/prData`);
     }
   };
 
@@ -245,6 +316,8 @@ export default function App() {
       console.error('Logout failed:', error);
     }
   };
+
+  const isTrialValid = userProfile ? (new Date().getTime() - new Date(userProfile.createdAt).getTime()) / (1000 * 60 * 60 * 24) <= 3 : true;
 
   if (!isAuthReady) {
     return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-indigo-600" size={32} /></div>;
@@ -292,7 +365,10 @@ export default function App() {
               <Clock size={16} />
               <span className="font-mono">{currentTime.toLocaleTimeString()}</span>
             </div>
-            <button onClick={handleLogout} className="text-neutral-500 hover:text-red-500 transition-colors">
+            <button onClick={() => setShowSettings(true)} className="text-neutral-500 hover:text-indigo-600 transition-colors" title="Settings">
+              <Settings size={18} />
+            </button>
+            <button onClick={handleLogout} className="text-neutral-500 hover:text-red-500 transition-colors" title="Logout">
               <LogOut size={18} />
             </button>
           </div>
@@ -333,6 +409,8 @@ export default function App() {
               onAdd={(m) => updateSelectedData({ meals: [...selectedData.meals, m] })}
               onDelete={(id) => updateSelectedData({ meals: selectedData.meals.filter(m => m.id !== id) })}
               onUpdate={(id, updatedMeal) => updateSelectedData({ meals: selectedData.meals.map(m => m.id === id ? updatedMeal : m) })}
+              userProfile={userProfile}
+              isTrialValid={isTrialValid}
             />
           )}
           {activeTab === 'workouts' && (
@@ -342,6 +420,8 @@ export default function App() {
               onUpdateData={updateSelectedData}
               prData={prData}
               setPrData={updatePrData}
+              userProfile={userProfile}
+              isTrialValid={isTrialValid}
             />
           )}
           {activeTab === 'activities' && (
@@ -355,8 +435,23 @@ export default function App() {
           )}
         </div>
       </main>
-      
-      <Chatbot />
+
+      {showOnboarding && (
+        <OnboardingModal 
+          user={user}
+          onComplete={() => {
+            setShowOnboarding(false);
+          }} 
+        />
+      )}
+
+      {showSettings && (
+        <SettingsModal 
+          user={user}
+          userProfile={userProfile}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </div>
   );
 }
@@ -474,7 +569,7 @@ function Dashboard({ data, historicalData, selectedDateStr }: { data: DailyData,
   );
 }
 
-function MealTracker({ meals, onAdd, onDelete, onUpdate }: { meals: Meal[], onAdd: (m: Meal) => void, onDelete: (id: string) => void, onUpdate: (id: string, m: Meal) => void }) {
+function MealTracker({ meals, onAdd, onDelete, onUpdate, userProfile, isTrialValid }: { meals: Meal[], onAdd: (m: Meal) => void, onDelete: (id: string) => void, onUpdate: (id: string, m: Meal) => void, userProfile: UserProfile | null, isTrialValid: boolean }) {
   const [description, setDescription] = useState('');
   const [name, setName] = useState('');
   const [calories, setCalories] = useState<number | ''>('');
@@ -491,14 +586,14 @@ function MealTracker({ meals, onAdd, onDelete, onUpdate }: { meals: Meal[], onAd
     setIsLoading(true);
     setError('');
     try {
-      const macros = await calculateMacros(description);
+      const macros = await calculateMacros(description, userProfile?.geminiApiKey, isTrialValid);
       setName(macros.name || description);
       setCalories(macros.calories || 0);
       setProtein(macros.protein || 0);
       setCarbs(macros.carbs || 0);
       setFat(macros.fat || 0);
-    } catch (err) {
-      setError('Failed to calculate macros. You can enter them manually.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to calculate macros. You can enter them manually.');
     } finally {
       setIsLoading(false);
     }
@@ -679,13 +774,17 @@ function WorkoutTracker({
   historicalData,
   onUpdateData,
   prData,
-  setPrData
+  setPrData,
+  userProfile,
+  isTrialValid
 }: { 
   data: DailyData,
   historicalData: DailyData[],
   onUpdateData: (newData: Partial<DailyData>) => void,
   prData: PRTracker,
-  setPrData: (data: PRTracker) => void
+  setPrData: (data: PRTracker) => void,
+  userProfile: UserProfile | null,
+  isTrialValid: boolean
 }) {
   const [year, month, d] = data.date.split('-');
   const day = new Date(Number(year), Number(month) - 1, Number(d)).getDay();
@@ -744,7 +843,7 @@ function WorkoutTracker({
     setIsSuggesting(true);
     setAiError('');
     try {
-      const suggestion = await suggestWorkoutPlan(selectedSplit, experience, goal);
+      const suggestion = await suggestWorkoutPlan(selectedSplit, experience, goal, userProfile?.geminiApiKey, isTrialValid);
       setAiSuggestion(suggestion);
     } catch (err: any) {
       setAiError(err.message || 'Failed to generate workout plan');

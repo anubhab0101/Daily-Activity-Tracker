@@ -70,4 +70,13 @@ export interface ExercisePR {
   prAction: 'Increase' | 'Maintain';
 }
 
+export interface UserProfile {
+  name: string;
+  age: string;
+  height: string;
+  goal: string;
+  createdAt: string;
+  geminiApiKey?: string;
+}
+
 export type PRTracker = Record<string, ExercisePR>;
