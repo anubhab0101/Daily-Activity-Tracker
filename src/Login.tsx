@@ -1,15 +1,19 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth } from './firebase';
 import { Activity } from 'lucide-react';
 
 export default function Login() {
+  const [errorMsg, setErrorMsg] = useState<string>('');
+
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
+    setErrorMsg('');
     try {
       await signInWithPopup(auth, provider);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login failed:', error);
+      setErrorMsg(error.message || 'Failed to log in. Please try again.');
     }
   };
 
@@ -22,6 +26,12 @@ export default function Login() {
         <h1 className="text-2xl font-bold text-neutral-900 mb-2">Welcome to LifeTracker AI</h1>
         <p className="text-neutral-500 mb-8">Log in to track your meals, workouts, and daily progress securely.</p>
         
+        {errorMsg && (
+          <div className="mb-6 p-4 bg-red-50 text-red-700 rounded-xl text-sm border border-red-100">
+            {errorMsg}
+          </div>
+        )}
+
         <button
           onClick={handleLogin}
           className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-white border border-neutral-200 rounded-xl font-medium text-neutral-700 hover:bg-neutral-50 transition-colors"

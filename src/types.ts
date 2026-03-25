@@ -13,6 +13,7 @@ export interface ExerciseSet {
   id: string;
   weight: number;
   reps: number | 'Failure';
+  isWarmup?: boolean;
 }
 
 export interface Exercise {

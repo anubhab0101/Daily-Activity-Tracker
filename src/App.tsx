@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Dumbbell, Utensils, Clock, Plus, Trash2, Loader2, Calendar, LayoutDashboard, Droplets, BookOpen, Footprints, Pill, LogOut, LineChart, ChevronLeft, ChevronRight } from 'lucide-react';
-import { calculateMacros } from './services/gemini';
+import { Activity, Dumbbell, Utensils, Clock, Plus, Trash2, Loader2, Calendar, LayoutDashboard, Droplets, BookOpen, Footprints, Pill, LogOut, LineChart, ChevronLeft, ChevronRight, MessageSquare, Send, X, Sparkles } from 'lucide-react';
+import { calculateMacros, createChatSession, suggestWorkoutPlan } from './services/gemini';
 import { Meal, Workout, DailyActivity, DailyData, PRTracker, Exercise, ExerciseSet, StudySession } from './types';
 import Login from './Login';
 import { auth, db } from './firebase';
@@ -18,6 +18,104 @@ const getLocalDate = (dateStr: string) => {
   const [year, month, day] = dateStr.split('-');
   return new Date(Number(year), Number(month) - 1, Number(day));
 };
+
+function Chatbot() {
+  const [isOpen, setIsOpen] = useState(false);
+  const [messages, setMessages] = useState<{role: 'user' | 'model', text: string}[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [chatSession, setChatSession] = useState<any>(null);
+
+  useEffect(() => {
+    if (isOpen && !chatSession) {
+      setChatSession(createChatSession());
+      setMessages([{ role: 'model', text: 'Hi! I am your fitness and nutrition assistant. How can I help you today?' }]);
+    }
+  }, [isOpen, chatSession]);
+
+  const handleSend = async () => {
+    if (!input.trim() || !chatSession) return;
+    
+    const userMsg = input.trim();
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setIsLoading(true);
+
+    try {
+      const response = await chatSession.sendMessage({ message: userMsg });
+      setMessages(prev => [...prev, { role: 'model', text: response.text }]);
+    } catch (error) {
+      console.error('Chat error:', error);
+      setMessages(prev => [...prev, { role: 'model', text: 'Sorry, I encountered an error while processing your request.' }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <>
+      {/* Floating Action Button */}
+      <button
+        onClick={() => setIsOpen(true)}
+        className={`fixed bottom-6 right-6 p-4 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 transition-all z-40 ${isOpen ? 'scale-0' : 'scale-100'}`}
+      >
+        <MessageSquare size={24} />
+      </button>
+
+      {/* Chat Window */}
+      <div className={`fixed bottom-6 right-6 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-neutral-200 z-50 transition-all duration-300 transform origin-bottom-right flex flex-col overflow-hidden ${isOpen ? 'scale-100 opacity-100' : 'scale-0 opacity-0 pointer-events-none'}`} style={{ height: '500px', maxHeight: 'calc(100vh - 48px)' }}>
+        {/* Header */}
+        <div className="bg-indigo-600 p-4 flex items-center justify-between text-white">
+          <div className="flex items-center gap-2">
+            <MessageSquare size={20} />
+            <h3 className="font-semibold">AI Assistant</h3>
+          </div>
+          <button onClick={() => setIsOpen(false)} className="text-indigo-100 hover:text-white transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 p-4 overflow-y-auto bg-neutral-50 space-y-4 flex flex-col">
+          {messages.map((msg, idx) => (
+            <div key={idx} className={`max-w-[85%] rounded-2xl px-4 py-2 ${msg.role === 'user' ? 'bg-indigo-600 text-white self-end rounded-br-sm' : 'bg-white border border-neutral-200 text-neutral-800 self-start rounded-bl-sm'}`}>
+              <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+            </div>
+          ))}
+          {isLoading && (
+            <div className="bg-white border border-neutral-200 text-neutral-800 self-start rounded-2xl rounded-bl-sm px-4 py-3 max-w-[85%]">
+              <Loader2 size={16} className="animate-spin text-indigo-600" />
+            </div>
+          )}
+        </div>
+
+        {/* Input */}
+        <div className="p-3 bg-white border-t border-neutral-100">
+          <form 
+            onSubmit={(e) => { e.preventDefault(); handleSend(); }}
+            className="flex items-center gap-2"
+          >
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask me anything..."
+              className="flex-1 p-2.5 bg-neutral-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              disabled={isLoading}
+            />
+            <button 
+              type="submit" 
+              disabled={!input.trim() || isLoading}
+              className="p-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              <Send size={18} />
+            </button>
+          </form>
+        </div>
+      </div>
+    </>
+  );
+}
 
 export default function App() {
   const [user, setUser] = useState(auth.currentUser);
@@ -245,6 +343,8 @@ export default function App() {
           )}
         </div>
       </main>
+      
+      <Chatbot />
     </div>
   );
 }
@@ -585,15 +685,27 @@ function WorkoutTracker({
     if (day === 3 || day === 6) return 'Legs, Shoulders & Traps';
     return 'Rest Day';
   };
-  const todaySplit = getSplit();
-
-  const previousWorkoutDay = historicalData
-    .filter(d => d.date < data.date && d.workouts.length > 0 && d.workouts[0].name === todaySplit)
-    .sort((a, b) => b.date.localeCompare(a.date))[0];
-  const previousWorkout = previousWorkoutDay?.workouts[0];
 
   const workouts = data.workouts;
   const activeWorkout = workouts.length > 0 ? workouts[0] : null;
+
+  const [selectedSplit, setSelectedSplit] = useState(activeWorkout?.name || getSplit());
+  const [workoutDuration, setWorkoutDuration] = useState<number | ''>(activeWorkout?.duration || '');
+
+  useEffect(() => {
+    if (activeWorkout) {
+      setSelectedSplit(activeWorkout.name);
+      setWorkoutDuration(activeWorkout.duration);
+    } else {
+      setSelectedSplit(getSplit());
+      setWorkoutDuration('');
+    }
+  }, [activeWorkout, data.date]);
+
+  const previousWorkoutDay = historicalData
+    .filter(d => d.date < data.date && d.workouts.length > 0 && d.workouts[0].name === selectedSplit)
+    .sort((a, b) => b.date.localeCompare(a.date))[0];
+  const previousWorkout = previousWorkoutDay?.workouts[0];
 
   // State for adding an exercise
   const [exerciseName, setExerciseName] = useState('');
@@ -606,6 +718,28 @@ function WorkoutTracker({
   const [weight, setWeight] = useState('');
   const [reps, setReps] = useState('');
   const [isFailure, setIsFailure] = useState(false);
+  const [isWarmup, setIsWarmup] = useState(false);
+  const [prPrompt, setPrPrompt] = useState<{name: string, oldPR: number, newPR: number, targetPR: number, prAction: 'Increase'|'Maintain'} | null>(null);
+
+  // State for AI Suggestion
+  const [experience, setExperience] = useState('Beginner');
+  const [goal, setGoal] = useState('Muscle gain');
+  const [aiSuggestion, setAiSuggestion] = useState<any>(null);
+  const [isSuggesting, setIsSuggesting] = useState(false);
+  const [aiError, setAiError] = useState('');
+
+  const handleSuggestWorkout = async () => {
+    setIsSuggesting(true);
+    setAiError('');
+    try {
+      const suggestion = await suggestWorkoutPlan(selectedSplit, experience, goal);
+      setAiSuggestion(suggestion);
+    } catch (err: any) {
+      setAiError(err.message || 'Failed to generate workout plan');
+    } finally {
+      setIsSuggesting(false);
+    }
+  };
 
   useEffect(() => {
     const pr = prData[exerciseName.trim().toLowerCase()];
@@ -625,11 +759,13 @@ function WorkoutTracker({
     setSets([...sets, {
       id: Date.now().toString(),
       weight: parseFloat(weight),
-      reps: isFailure ? 'Failure' : parseInt(reps, 10)
+      reps: isFailure ? 'Failure' : parseInt(reps, 10),
+      isWarmup
     }]);
     setWeight('');
     setReps('');
     setIsFailure(false);
+    setIsWarmup(false);
   };
 
   const handleSaveExercise = () => {
@@ -639,19 +775,11 @@ function WorkoutTracker({
     
     let maxWeightInSets = 0;
     sets.forEach(s => {
-      if (s.weight > maxWeightInSets) maxWeightInSets = s.weight;
+      if (!s.isWarmup && s.weight > maxWeightInSets) maxWeightInSets = s.weight;
     });
     
-    const newPR = Math.max(Number(currentPR) || 0, maxWeightInSets);
-
-    setPrData({
-      ...prData,
-      [normalizedName]: {
-        currentPR: newPR,
-        targetPR: Number(targetPR) || 0,
-        prAction
-      }
-    });
+    const oldPR = Number(currentPR) || 0;
+    const isNewPR = maxWeightInSets > oldPR;
 
     const newExercise: Exercise = {
       id: Date.now().toString(),
@@ -662,6 +790,8 @@ function WorkoutTracker({
     if (activeWorkout) {
       const updatedWorkout = {
         ...activeWorkout,
+        name: selectedSplit,
+        duration: Number(workoutDuration) || 0,
         exercises: [...(activeWorkout.exercises || []), newExercise]
       };
       onUpdateData({
@@ -671,12 +801,31 @@ function WorkoutTracker({
       onUpdateData({
         workouts: [{
           id: Date.now().toString(),
-          name: todaySplit,
-          duration: 60, // Default duration
+          name: selectedSplit,
+          duration: Number(workoutDuration) || 0,
           intensity: 'Medium',
           timestamp: Date.now(),
           exercises: [newExercise]
         }]
+      });
+    }
+
+    if (isNewPR) {
+      setPrPrompt({
+        name: normalizedName,
+        oldPR,
+        newPR: maxWeightInSets,
+        targetPR: Number(targetPR) || 0,
+        prAction
+      });
+    } else {
+      setPrData({
+        ...prData,
+        [normalizedName]: {
+          currentPR: oldPR,
+          targetPR: Number(targetPR) || 0,
+          prAction
+        }
       });
     }
 
@@ -687,11 +836,69 @@ function WorkoutTracker({
     setPrAction('Increase');
   };
 
-  if (isRestDay) {
-    return (
-      <div className="space-y-6">
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex-1">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-2">
+            <h2 className="text-xl font-bold text-neutral-900 whitespace-nowrap">Day's Split:</h2>
+            <select
+              value={selectedSplit}
+              onChange={(e) => {
+                setSelectedSplit(e.target.value);
+                if (activeWorkout) {
+                  onUpdateData({
+                    workouts: workouts.map(w => w.id === activeWorkout.id ? { ...w, name: e.target.value } : w)
+                  });
+                }
+              }}
+              className="p-2 rounded-lg border border-neutral-200 focus:ring-2 focus:ring-indigo-500 outline-none font-medium text-indigo-600 bg-indigo-50"
+            >
+              <option value="Chest & Triceps">Chest & Triceps</option>
+              <option value="Back & Biceps">Back & Biceps</option>
+              <option value="Legs, Shoulders & Traps">Legs, Shoulders & Traps</option>
+              <option value="Full Body">Full Body</option>
+              <option value="Upper Body">Upper Body</option>
+              <option value="Lower Body">Lower Body</option>
+              <option value="Rest Day">Rest Day</option>
+            </select>
+            
+            {selectedSplit !== 'Rest Day' && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-neutral-700">Duration:</span>
+                <input
+                  type="number"
+                  value={workoutDuration}
+                  onChange={(e) => {
+                    const val = e.target.value ? Number(e.target.value) : '';
+                    setWorkoutDuration(val);
+                    if (activeWorkout) {
+                      onUpdateData({
+                        workouts: workouts.map(w => w.id === activeWorkout.id ? { ...w, duration: Number(val) || 0 } : w)
+                      });
+                    }
+                  }}
+                  placeholder="mins"
+                  className="w-20 p-2 rounded-lg border border-neutral-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                />
+                <span className="text-sm text-neutral-500">mins</span>
+              </div>
+            )}
+          </div>
+          <p className="text-sm mt-1 text-neutral-500">Log your exercises, sets, reps, and track your PRs below.</p>
+        </div>
+        {activeWorkout && (
+          <button 
+            onClick={() => onUpdateData({ workouts: [] })}
+            className="px-4 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors text-sm font-medium whitespace-nowrap"
+          >
+            Clear Workout
+          </button>
+        )}
+      </div>
+
+      {selectedSplit === 'Rest Day' ? (
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-neutral-100">
-          <h2 className="text-xl font-bold mb-2">Day's Split: <span className="text-indigo-600">Rest Day</span></h2>
           <p className="text-neutral-500 mb-6">Take it easy! Track your light cardio and steps below.</p>
           
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -727,24 +934,87 @@ function WorkoutTracker({
             </div>
           </div>
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-neutral-900">Day's Split: <span className="text-indigo-600">{todaySplit}</span></h2>
-          <p className="text-sm mt-1 text-neutral-500">Log your exercises, sets, reps, and track your PRs below.</p>
+      ) : (
+        <>
+          <div className="bg-indigo-50 p-6 rounded-2xl shadow-sm border border-indigo-100">
+        <h3 className="text-lg font-bold text-indigo-900 mb-4 flex items-center gap-2">
+          <Sparkles size={20} className="text-indigo-600" /> AI Workout Generator
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="block text-sm font-medium text-indigo-900 mb-1">Experience Level</label>
+            <select
+              value={experience}
+              onChange={(e) => setExperience(e.target.value)}
+              className="w-full p-3 rounded-xl border border-indigo-200 bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+            >
+              <option value="Beginner">Beginner</option>
+              <option value="Intermediate">Intermediate</option>
+              <option value="Veteran">Veteran</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-indigo-900 mb-1">Goal</label>
+            <select
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              className="w-full p-3 rounded-xl border border-indigo-200 bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+            >
+              <option value="Fat loss">Fat loss</option>
+              <option value="Lean gain">Lean gain</option>
+              <option value="Muscle gain">Muscle gain</option>
+              <option value="Fat loss with muscle gain">Fat loss with muscle gain</option>
+            </select>
+          </div>
         </div>
-        {activeWorkout && (
-          <button 
-            onClick={() => onUpdateData({ workouts: [] })}
-            className="px-4 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors text-sm font-medium"
-          >
-            Clear Workout
-          </button>
+        <button
+          onClick={handleSuggestWorkout}
+          disabled={isSuggesting}
+          className="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+        >
+          {isSuggesting ? (
+            <><Loader2 size={18} className="animate-spin" /> Generating...</>
+          ) : (
+            <><Sparkles size={18} /> Get AI Suggestion</>
+          )}
+        </button>
+
+        {aiError && <p className="text-red-600 text-sm mt-4">{aiError}</p>}
+
+        {aiSuggestion && (
+          <div className="mt-6 space-y-6 bg-white p-5 rounded-xl border border-indigo-100">
+            <div>
+              <h4 className="font-bold text-neutral-900 mb-3 text-lg">Suggested Exercises</h4>
+              <div className="space-y-3">
+                {aiSuggestion.exercises.map((ex: any, idx: number) => (
+                  <div key={idx} className="bg-neutral-50 p-4 rounded-lg border border-neutral-100">
+                    <div className="flex justify-between items-start mb-2">
+                      <h5 className="font-bold text-indigo-900">{ex.name}</h5>
+                      <span className="text-sm font-medium bg-indigo-100 text-indigo-800 px-2 py-1 rounded-md">
+                        {ex.sets} sets × {ex.reps}
+                      </span>
+                    </div>
+                    <p className="text-sm text-neutral-700 mb-1"><span className="font-medium">Weight:</span> {ex.weightGuidance}</p>
+                    <p className="text-sm text-neutral-600 italic">{ex.notes}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+            <div>
+              <h4 className="font-bold text-neutral-900 mb-3 text-lg">Cardio Options</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-orange-50 p-4 rounded-lg border border-orange-100">
+                  <h5 className="font-bold text-orange-900 mb-1">Intense Cardio</h5>
+                  <p className="text-sm text-orange-800">{aiSuggestion.cardio.intense}</p>
+                </div>
+                <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                  <h5 className="font-bold text-blue-900 mb-1">Medium Cardio</h5>
+                  <p className="text-sm text-blue-800">{aiSuggestion.cardio.medium}</p>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 
@@ -775,6 +1045,43 @@ function WorkoutTracker({
                   );
                 }
                 return null;
+              })()
+            )}
+            
+            {exerciseName.trim() && (
+              (() => {
+                const history = historicalData
+                  .filter(d => d.workouts.some(w => w.exercises.some(e => e.name.toLowerCase() === exerciseName.trim().toLowerCase())))
+                  .map(d => {
+                    const ex = d.workouts.flatMap(w => w.exercises).find(e => e.name.toLowerCase() === exerciseName.trim().toLowerCase());
+                    return { date: d.date, sets: ex?.sets || [] };
+                  })
+                  .sort((a, b) => b.date.localeCompare(a.date))
+                  .slice(0, 5);
+                
+                if (history.length === 0) return null;
+                
+                return (
+                  <div className="mt-4 bg-neutral-50 p-4 rounded-xl border border-neutral-100">
+                    <h4 className="text-sm font-bold text-neutral-700 mb-2 flex items-center gap-2">
+                      <Clock size={16} /> History for {exerciseName}
+                    </h4>
+                    <div className="space-y-3">
+                      {history.map((h, i) => (
+                        <div key={i} className="text-sm">
+                          <span className="font-medium text-neutral-600">{format(getLocalDate(h.date), 'MMM d, yyyy')}:</span>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            {h.sets.map((s, j) => (
+                              <span key={j} className={`px-2 py-1 rounded-md text-xs ${s.isWarmup ? 'bg-yellow-100 text-yellow-800' : 'bg-white border border-neutral-200 text-neutral-700'}`}>
+                                {s.weight}kg × {s.reps} {s.isWarmup ? '(W)' : ''}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
               })()
             )}
           </div>
@@ -820,7 +1127,9 @@ function WorkoutTracker({
               <div className="mb-4 space-y-2">
                 {sets.map((set, idx) => (
                   <div key={set.id} className="flex items-center justify-between bg-neutral-50 p-3 rounded-lg border border-neutral-100">
-                    <span className="font-medium text-neutral-700">Set {idx + 1}: {set.weight} kg/lbs × {set.reps}</span>
+                    <span className="font-medium text-neutral-700">
+                      Set {idx + 1}: {set.weight} kg/lbs × {set.reps} {set.isWarmup && <span className="ml-2 text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">Warm-up</span>}
+                    </span>
                     <button 
                       onClick={() => setSets(sets.filter(s => s.id !== set.id))}
                       className="text-neutral-400 hover:text-red-500"
@@ -852,15 +1161,27 @@ function WorkoutTracker({
                   className="w-full p-2.5 rounded-lg border border-neutral-200 focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-neutral-100 disabled:text-neutral-400"
                 />
               </div>
-              <div className="flex items-center gap-2 pb-3 px-2">
-                <input 
-                  type="checkbox" 
-                  id="failure" 
-                  checked={isFailure}
-                  onChange={(e) => setIsFailure(e.target.checked)}
-                  className="rounded text-indigo-600 focus:ring-indigo-500"
-                />
-                <label htmlFor="failure" className="text-sm font-medium text-neutral-700">Till Failure</label>
+              <div className="flex items-center gap-4 pb-3 px-2">
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="checkbox" 
+                    id="failure" 
+                    checked={isFailure}
+                    onChange={(e) => setIsFailure(e.target.checked)}
+                    className="rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <label htmlFor="failure" className="text-sm font-medium text-neutral-700">Till Failure</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="checkbox" 
+                    id="warmup" 
+                    checked={isWarmup}
+                    onChange={(e) => setIsWarmup(e.target.checked)}
+                    className="rounded text-yellow-600 focus:ring-yellow-500"
+                  />
+                  <label htmlFor="warmup" className="text-sm font-medium text-neutral-700">Warm-up Set</label>
+                </div>
               </div>
               <button
                 onClick={handleAddSet}
@@ -883,6 +1204,53 @@ function WorkoutTracker({
           </div>
         </div>
       </div>
+
+      {prPrompt && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-2xl max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-bold mb-2 flex items-center gap-2">
+              <Sparkles className="text-yellow-500" /> New PR Achieved!
+            </h3>
+            <p className="text-neutral-600 mb-6">
+              You lifted <span className="font-bold text-indigo-600">{prPrompt.newPR}</span> for {prPrompt.name}, beating your previous PR of {prPrompt.oldPR}! Do you want to update your PR tracker?
+            </p>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => {
+                  setPrData({
+                    ...prData,
+                    [prPrompt.name]: {
+                      currentPR: prPrompt.oldPR,
+                      targetPR: prPrompt.targetPR,
+                      prAction: prPrompt.prAction
+                    }
+                  });
+                  setPrPrompt(null);
+                }}
+                className="flex-1 px-4 py-2 bg-neutral-100 text-neutral-700 rounded-xl font-medium hover:bg-neutral-200 transition-colors"
+              >
+                Skip
+              </button>
+              <button 
+                onClick={() => {
+                  setPrData({
+                    ...prData,
+                    [prPrompt.name]: {
+                      currentPR: prPrompt.newPR,
+                      targetPR: prPrompt.targetPR,
+                      prAction: prPrompt.prAction
+                    }
+                  });
+                  setPrPrompt(null);
+                }}
+                className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors"
+              >
+                Update PR
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeWorkout?.exercises && activeWorkout.exercises.length > 0 && (
         <div className="space-y-4">
@@ -924,7 +1292,7 @@ function WorkoutTracker({
       {activeWorkout?.exercises && activeWorkout.exercises.length > 0 && previousWorkout && (
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-neutral-100 mt-6">
           <h3 className="text-lg font-bold mb-4">Progress vs Previous Session</h3>
-          <p className="text-sm text-neutral-500 mb-6">Comparing your max weight for each exercise against your last {todaySplit} session on {format(getLocalDate(previousWorkoutDay.date), 'MMM d')}.</p>
+          <p className="text-sm text-neutral-500 mb-6">Comparing your max weight for each exercise against your last {selectedSplit} session on {format(getLocalDate(previousWorkoutDay.date), 'MMM d')}.</p>
           
           {(() => {
             const chartData = activeWorkout.exercises.map(ex => {
@@ -968,6 +1336,8 @@ function WorkoutTracker({
             );
           })()}
         </div>
+      )}
+      </>
       )}
     </div>
   );
