@@ -263,7 +263,7 @@ export default function App() {
             <div className="bg-indigo-600 p-2 rounded-lg text-white">
               <Activity size={20} />
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-neutral-900 hidden sm:block">LifeTracker AI</h1>
+            <h1 className="text-xl font-bold tracking-tight text-neutral-900 hidden sm:block">ApexFit AI</h1>
           </div>
 
           {/* Date Selector */}
