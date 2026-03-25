@@ -5,7 +5,7 @@ import { Meal, Workout, DailyActivity, DailyData, PRTracker, Exercise, ExerciseS
 import Login from './Login';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, onSnapshot, setDoc, getDoc, collection, query, getDocs } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, collection, query, getDocs, enableNetwork, disableNetwork } from 'firebase/firestore';
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { format, subDays, addDays, parseISO, startOfWeek, endOfWeek, eachDayOfInterval } from 'date-fns';
 
@@ -152,6 +152,18 @@ export default function App() {
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        enableNetwork(db).catch(console.error);
+      } else {
+        disableNetwork(db).catch(console.error);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   useEffect(() => {
