@@ -57,29 +57,57 @@ export async function suggestWorkoutPlan(split: string, experience: string, goal
 
 export async function calculateMacros(mealDescription: string, userApiKey?: string, trialValid?: boolean) {
   const ai = getAiClient(userApiKey, trialValid);
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Analyze the following meal and estimate its nutritional content. Use Google Search to find the most accurate and up-to-date nutritional information for these specific foods. Meal description: ${mealDescription}`,
-    config: {
-      tools: [{ googleSearch: {} }],
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          name: { type: Type.STRING, description: "A short, descriptive name for the meal" },
-          calories: { type: Type.NUMBER, description: "Estimated total calories" },
-          protein: { type: Type.NUMBER, description: "Estimated protein in grams" },
-          carbs: { type: Type.NUMBER, description: "Estimated carbohydrates in grams" },
-          fat: { type: Type.NUMBER, description: "Estimated fat in grams" },
-        },
-        required: ["name", "calories", "protein", "carbs", "fat"],
+  
+  const prompt = `Analyze the following meal and estimate its nutritional content. Use Google Search to find the most accurate and up-to-date nutritional information for these specific foods. Meal description: ${mealDescription}
+      
+You MUST return ONLY a valid JSON object with the following structure, and no other text or markdown formatting:
+{
+  "name": "A short, descriptive name for the meal",
+  "calories": 0,
+  "protein": 0,
+  "carbs": 0,
+  "fat": 0
+}`;
+
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
       },
-    },
-  });
+    });
+  } catch (error: any) {
+    // If we hit a quota error (often caused by Search Grounding limits on free tier),
+    // fallback to standard generation without the googleSearch tool.
+    if (error.message?.includes("429") || error.message?.includes("quota") || error.status === 429) {
+      console.warn("Search Grounding quota exceeded, falling back to standard generation...");
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: prompt,
+        });
+      } catch (fallbackError: any) {
+        if (fallbackError.message?.includes("429") || fallbackError.message?.includes("quota") || fallbackError.status === 429) {
+          throw new Error("API Quota Exceeded. Your Gemini API key has run out of quota completely. Please check your billing details or try again later.");
+        }
+        throw fallbackError;
+      }
+    } else {
+      throw error;
+    }
+  }
 
   if (!response.text) {
     throw new Error("Failed to generate macros");
   }
 
-  return JSON.parse(response.text);
+  try {
+    const text = response.text.replace(/```json\n?|\n?```/g, '').trim();
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Failed to parse macros JSON:", response.text);
+    throw new Error("Failed to parse macros response");
+  }
 }
